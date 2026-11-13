@@ -1,0 +1,26 @@
+# Ignore all Markdown documentation, including project instructions and skills.
+*.md
+
+# Ignore the analysis folder.
+/Analisis/
+
+/backend/node_modules/
+/backend/.agents
+/backend/.env
+/backend/.env.*
+/backend/.env.example
+/backend/docs/
+/backend/tests/
+/backend/AGENTS.md
+/backend/package-lock.json
+
+/mobile/node_modules/
+/mobile/.env
+/mobile/.env.*
+/mobile/.env.example
+/mobile/.claude
+/mobile/.expo/
+/mobile/docs/
+/mobile/tests/
+/mobile/AGENTS.md
+/mobile/package-lock.json

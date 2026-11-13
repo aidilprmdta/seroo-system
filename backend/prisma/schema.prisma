@@ -1,0 +1,380 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==========================================
+// ENUMS
+// ==========================================
+
+enum Role {
+  CREW
+  MANAGER
+  OWNER
+}
+
+enum OrderStatus {
+  COMPLETED
+  CANCELLED
+}
+
+enum PaymentMethod {
+  CASH
+  QRIS
+}
+
+enum PaymentStatus {
+  RECORDED
+  PENDING_RECONCILIATION
+}
+
+enum StockMovementType {
+  IN
+  OUT
+  WASTE
+  ADJUSTMENT
+  TRANSFER_IN
+  TRANSFER_OUT
+}
+
+enum StockRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  COMPLETED
+  CANCELLED
+}
+
+// ==========================================
+// USERS & OUTLETS
+// ==========================================
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  memberships          OutletMembership[]
+  authSessions         AuthSession[]
+  orders               Order[]
+  expenses             Expense[]
+  wasteRecords         WasteRecord[]
+  stockMovements       StockMovement[]
+  requestedStockOrders StockRequest[]     @relation("RequestedBy")
+  processedStockOrders StockRequest[]     @relation("ProcessedBy")
+}
+
+model AuthSession {
+  id         String    @id @default(cuid())
+  userId     String
+  deviceName String?
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  refreshTokens RefreshToken[]
+
+  @@index([userId, revokedAt])
+}
+
+model RefreshToken {
+  id        String    @id @default(cuid())
+  sessionId String
+  tokenHash String    @unique
+  issuedAt  DateTime  @default(now())
+  usedAt    DateTime?
+  revokedAt DateTime?
+
+  session AuthSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, usedAt])
+}
+
+model Outlet {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  name      String
+  address   String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  memberships    OutletMembership[]
+  orders         Order[]
+  expenses       Expense[]
+  stocks         OutletStock[]
+  stockMovements StockMovement[]
+  wasteRecords   WasteRecord[]
+
+  outgoingRequests StockRequest[] @relation("SourceOutlet")
+  incomingRequests StockRequest[] @relation("DestinationOutlet")
+}
+
+model OutletMembership {
+  id        String   @id @default(cuid())
+  userId    String
+  outletId  String
+  role      Role
+  createdAt DateTime @default(now())
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  outlet Outlet @relation(fields: [outletId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, outletId])
+  @@index([outletId, role])
+}
+
+// ==========================================
+// PRODUCTS & POS
+// ==========================================
+
+model Product {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  category    String?
+  imageUrl    String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  variants ProductVariant[]
+}
+
+model ProductVariant {
+  id        String  @id @default(cuid())
+  productId String
+  name      String
+  price     Decimal @db.Decimal(12, 2)
+  isActive  Boolean @default(true)
+
+  product    Product      @relation(fields: [productId], references: [id])
+  orderItems OrderItem[]
+  recipes    RecipeItem[]
+
+  @@unique([productId, name])
+}
+
+model AddOn {
+  id        String   @id @default(cuid())
+  name      String
+  price     Decimal  @db.Decimal(12, 2)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  orderItems OrderItemAddOn[]
+}
+
+model Order {
+  id            String        @id @default(cuid())
+  outletId      String
+  crewId        String
+  orderNumber   String
+  status        OrderStatus   @default(COMPLETED)
+  paymentMethod PaymentMethod
+  paymentStatus PaymentStatus @default(RECORDED)
+  clientTransactionId String?
+  payloadHash   String?
+  subtotal      Decimal       @db.Decimal(12, 2)
+  total         Decimal       @db.Decimal(12, 2)
+  notes         String?
+  createdAt     DateTime      @default(now())
+  completedAt   DateTime?
+
+  outlet Outlet      @relation(fields: [outletId], references: [id])
+  crew   User        @relation(fields: [crewId], references: [id])
+  items  OrderItem[]
+
+  @@unique([outletId, orderNumber])
+  @@unique([outletId, crewId, clientTransactionId])
+  @@index([outletId, createdAt])
+  @@index([crewId])
+}
+
+model OrderItem {
+  id               String  @id @default(cuid())
+  orderId          String
+  productVariantId String
+  productName      String
+  variantName      String
+  quantity         Int
+  unitPrice        Decimal @db.Decimal(12, 2)
+  subtotal         Decimal @db.Decimal(12, 2)
+
+  order          Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productVariant ProductVariant   @relation(fields: [productVariantId], references: [id])
+  addOns         OrderItemAddOn[]
+}
+
+model OrderItemAddOn {
+  id          String  @id @default(cuid())
+  orderItemId String
+  addOnId     String?
+  addOnName   String
+  quantity    Int     @default(1)
+  unitPrice   Decimal @db.Decimal(12, 2)
+
+  orderItem OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  addOn     AddOn?    @relation(fields: [addOnId], references: [id], onDelete: SetNull)
+}
+
+// ==========================================
+// EXPENSES & FINANCE
+// ==========================================
+
+model ExpenseCategory {
+  id            String   @id @default(cuid())
+  name          String   @unique
+  isProvisional Boolean  @default(true)
+  createdAt     DateTime @default(now())
+
+  expenses Expense[]
+}
+
+model Expense {
+  id          String   @id @default(cuid())
+  outletId    String
+  categoryId  String
+  createdById String
+  description String?
+  amount      Decimal  @db.Decimal(12, 2)
+  expenseDate DateTime
+  createdAt   DateTime @default(now())
+
+  outlet    Outlet          @relation(fields: [outletId], references: [id])
+  category  ExpenseCategory @relation(fields: [categoryId], references: [id])
+  createdBy User            @relation(fields: [createdById], references: [id])
+
+  @@index([outletId, expenseDate])
+}
+
+// ==========================================
+// INVENTORY & STOCK
+// ==========================================
+
+model InventoryItem {
+  id        String   @id @default(cuid())
+  name      String
+  unit      String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  stocks       OutletStock[]
+  movements    StockMovement[]
+  requestItems StockRequestItem[]
+  recipes      RecipeItem[]
+  wasteRecords WasteRecord[]
+}
+
+model OutletStock {
+  id              String   @id @default(cuid())
+  outletId        String
+  inventoryItemId String
+  quantity        Decimal  @default(0) @db.Decimal(12, 3)
+  updatedAt       DateTime @updatedAt
+
+  outlet        Outlet        @relation(fields: [outletId], references: [id])
+  inventoryItem InventoryItem @relation(fields: [inventoryItemId], references: [id])
+
+  @@unique([outletId, inventoryItemId])
+}
+
+model StockMovement {
+  id              String            @id @default(cuid())
+  outletId        String
+  inventoryItemId String
+  createdById     String
+  type            StockMovementType
+  quantity        Decimal           @db.Decimal(12, 3)
+  note            String?
+  referenceCode   String?
+  createdAt       DateTime          @default(now())
+
+  outlet        Outlet        @relation(fields: [outletId], references: [id])
+  inventoryItem InventoryItem @relation(fields: [inventoryItemId], references: [id])
+  createdBy     User          @relation(fields: [createdById], references: [id])
+
+  @@index([outletId, inventoryItemId, createdAt])
+}
+
+model StockRequest {
+  id                  String             @id @default(cuid())
+  sourceOutletId      String
+  destinationOutletId String
+  requestedById       String
+  processedById       String?
+  status              StockRequestStatus @default(PENDING)
+  note                String?
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  sourceOutlet      Outlet @relation("SourceOutlet", fields: [sourceOutletId], references: [id])
+  destinationOutlet Outlet @relation("DestinationOutlet", fields: [destinationOutletId], references: [id])
+
+  requestedBy User  @relation("RequestedBy", fields: [requestedById], references: [id])
+  processedBy User? @relation("ProcessedBy", fields: [processedById], references: [id])
+
+  items StockRequestItem[]
+}
+
+model StockRequestItem {
+  id              String   @id @default(cuid())
+  stockRequestId  String
+  inventoryItemId String
+  requestedQty    Decimal  @db.Decimal(12, 3)
+  approvedQty     Decimal? @db.Decimal(12, 3)
+
+  stockRequest  StockRequest  @relation(fields: [stockRequestId], references: [id], onDelete: Cascade)
+  inventoryItem InventoryItem @relation(fields: [inventoryItemId], references: [id])
+
+  @@unique([stockRequestId, inventoryItemId])
+}
+
+// ==========================================
+// RECIPE & AUTOMATIC STOCK USAGE
+// ==========================================
+
+model RecipeItem {
+  id               String  @id @default(cuid())
+  productVariantId String
+  inventoryItemId  String
+  quantity         Decimal @db.Decimal(12, 3)
+
+  productVariant ProductVariant @relation(fields: [productVariantId], references: [id])
+  inventoryItem  InventoryItem  @relation(fields: [inventoryItemId], references: [id])
+
+  @@unique([productVariantId, inventoryItemId])
+}
+
+// ==========================================
+// WASTE
+// ==========================================
+
+model WasteRecord {
+  id              String   @id @default(cuid())
+  outletId        String
+  createdById     String
+  inventoryItemId String?
+  itemName        String
+  category        String
+  quantity        Decimal  @db.Decimal(12, 3)
+  unit            String
+  description     String?
+  wasteDate       DateTime
+  createdAt       DateTime @default(now())
+
+  outlet        Outlet         @relation(fields: [outletId], references: [id])
+  createdBy     User           @relation(fields: [createdById], references: [id])
+  inventoryItem InventoryItem? @relation(fields: [inventoryItemId], references: [id], onDelete: SetNull)
+
+  @@index([outletId, wasteDate])
+}
